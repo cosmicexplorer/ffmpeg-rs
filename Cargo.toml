@@ -1,0 +1,18 @@
+[package]
+name = "ffmpeg"
+description = "Use ffmpeg libraries in rust!"
+version = "0.0.0"
+edition = "2021"
+license = "AGPL-3.0-only"
+repository = "https://github.com/cosmicexplorer/ffmpeg-rs"
+authors = ["Danny McClanahan <dmcC2@hypnicjerk.ai>"]
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[profile.release]
+# This makes the compiled code faster and smaller, but it makes compiling slower,
+# so it's only enabled in release mode.
+lto                     = true
+
+[dependencies]
+sys = { path = "./sys" }
