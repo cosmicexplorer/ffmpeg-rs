@@ -144,6 +144,8 @@ async fn main() -> Result<(), spack::Error> {
       .header("src/ffmpeg.h")
       .parse_callbacks(Box::new(bindgen::CargoCallbacks));
 
+    /* We always build *all* of these libraries for the ffmpeg%emscripten spec wihin *spack*; we use
+     * features to modify *which of these libraries gets included in your rust code*. */
     #[cfg(feature = "libavcodec")]
     let bindings = bindings.clang_arg("-DLIBAVCODEC");
     #[cfg(feature = "libavdevice")]

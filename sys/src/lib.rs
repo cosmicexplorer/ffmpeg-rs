@@ -38,11 +38,12 @@
 /* Arc<Mutex> can be more clear than needing to grok Orderings: */
 #![allow(clippy::mutex_atomic)]
 
+pub mod bindings;
+
 #[cfg(test)]
 mod tests {
-    #[test]
-    fn it_works() {
-        let result = 2 + 2;
-        assert_eq!(result, 4);
-    }
+  #[test]
+  fn it_works() {
+    assert_eq!(bindings::LIBAVUTIL_VERSION_MAJOR, 56);
+  }
 }
