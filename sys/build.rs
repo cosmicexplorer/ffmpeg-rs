@@ -35,10 +35,49 @@ use spack::{
   invocation::spack::Invocation,
 };
 
-#[tokio::main]
-async fn main() -> Result<(), spack::Error> {
-  let spack = Invocation::summon().await?;
+use std::path::PathBuf;
 
+cfg_if::cfg_if! {
+  if #[cfg(feature = "wasm")] {
+    async fn ensure_ffmpeg_prefix(spack: Invocation) -> Result<PathBuf, spack::Error> {
+      ensure_ffmpeg_prefix_wasm(spack).await
+    }
+  } else if #[cfg(feature = "linux")] {
+    async fn ensure_ffmpeg_prefix(spack: Invocation) -> Result<PathBuf, spack::Error> {
+      ensure_ffmpeg_prefix_linux(spack).await
+    }
+  } else {
+    unreachable!("must enable either wasm or linux features at this time");
+  }
+}
+
+#[allow(dead_code)]
+async fn ensure_ffmpeg_prefix_linux(spack: Invocation) -> Result<PathBuf, spack::Error> {
+  let ffmpeg_for_linux = CLISpec::new(format!("ffmpeg@4.4.1"));
+  let install = Install {
+    spack: spack.clone(),
+    spec: ffmpeg_for_linux,
+  };
+  let ffmpeg_found_spec = install
+    .clone()
+    .install_find()
+    .await
+    .map_err(|e| CommandError::Install(install, e))?;
+  let find_prefix = FindPrefix {
+    spack: spack.clone(),
+    spec: ffmpeg_found_spec.hashed_spec(),
+  };
+  let ffmpeg_prefix = find_prefix
+    .clone()
+    .find_prefix()
+    .await
+    .map_err(|e| CommandError::FindPrefix(find_prefix, e))?
+    .unwrap();
+  Ok(ffmpeg_prefix)
+}
+
+#[allow(dead_code)]
+async fn ensure_ffmpeg_prefix_wasm(spack: Invocation) -> Result<PathBuf, spack::Error> {
   let llvm_for_wasm = CLISpec::new("llvm@14:+lld+clang+multiple-definitions~compiler-rt~tools-extra-clang~libcxx~gold~openmp~internal_unwind~polly targets=webassembly");
   let install = Install {
     spack: spack.clone(),
@@ -137,12 +176,29 @@ async fn main() -> Result<(), spack::Error> {
     .map_err(|e| CommandError::FindPrefix(find_prefix, e))?
     .unwrap();
 
+  Ok(ffmpeg_prefix)
+}
+
+#[tokio::main]
+async fn main() -> Result<(), spack::Error> {
+  let spack = Invocation::summon().await?;
+
+  let ffmpeg_prefix = ensure_ffmpeg_prefix(spack).await?;
+
   let ffmpeg_header_root = ffmpeg_prefix.join("include");
   let bindings = {
     let bindings = bindgen::Builder::default()
       .clang_arg(format!("-I{}", ffmpeg_header_root.display()))
       .header("src/ffmpeg.h")
-      .parse_callbacks(Box::new(bindgen::CargoCallbacks));
+      .parse_callbacks(Box::new(bindgen::CargoCallbacks))
+      .allowlist_type("AV.*")
+      .allowlist_type("Swr.*")
+      .allowlist_var("Swr.*")
+      .allowlist_var("LIBAV.*")
+      .allowlist_var("FF_.*")
+      .allowlist_var("AV_.*")
+      .allowlist_function("av.*")
+      .allowlist_function("swr.*");
 
     /* We always build *all* of these libraries for the ffmpeg%emscripten spec wihin *spack*; we use
      * features to modify *which of these libraries gets included in your rust code*. */

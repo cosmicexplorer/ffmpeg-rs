@@ -6,7 +6,6 @@
 /* Turn all warnings into errors! */
 /* #![deny(warnings)] */
 /* Warn for missing docs in general, and hard require crate-level docs. */
-#![warn(missing_docs)]
 #![warn(rustdoc::missing_crate_level_docs)]
 /* Make all doctests fail if they produce any warnings. */
 #![doc(test(attr(deny(warnings))))]
@@ -38,12 +37,17 @@
 /* Arc<Mutex> can be more clear than needing to grok Orderings: */
 #![allow(clippy::mutex_atomic)]
 
+#![allow(deref_nullptr)]
+#![allow(non_upper_case_globals)]
+#![allow(non_camel_case_types)]
+#![allow(non_snake_case)]
+
 pub mod bindings;
 
 #[cfg(test)]
 mod tests {
   #[test]
   fn it_works() {
-    assert_eq!(bindings::LIBAVUTIL_VERSION_MAJOR, 56);
+    assert_eq!(crate::bindings::LIBAVUTIL_VERSION_MAJOR, 56);
   }
 }

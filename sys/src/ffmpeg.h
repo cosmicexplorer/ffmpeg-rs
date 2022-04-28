@@ -2,27 +2,27 @@
 #define __FFMPEG_H__
 
 #ifdef LIBAVCODEC
-#include "libavcodec/version.h"
+#include "libavcodec/avcodec.h"
 #endif
 
 #ifdef LIBAVDEVICE
-#include "libavdevice/version.h"
+#include "libavdevice/avdevice.h"
 #endif
 
 #ifdef LIBAVFILTER
-#include "libavfilter/version.h"
+#include "libavfilter/avfilter.h"
 #endif
 
 #ifdef LIBAVFORMAT
-#include "libavformat/version.h"
+#include "libavformat/avformat.h"
 #endif
 
 #ifdef LIBAVUTIL
-#include "libavutil/version.h"
+#include "libavutil/avutil.h"
 #endif
 
 #ifdef LIBPOSTPROC
-#include "libpostproc/version.h"
+#include "libpostproc/postprocess.h"
 #endif
 
 #ifdef LIBSWRESAMPLE
@@ -30,7 +30,7 @@
 #endif
 
 #ifdef LIBSWSCALE
-#include "libswscale/version.h"
+#include "libswscale/swscale.h"
 #endif
 
 #endif  /* __FFMPEG_H__ */
