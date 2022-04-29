@@ -13,10 +13,14 @@ crate-type = ["cdylib"]
 
 [build-dependencies]
 bindgen = "0.59.2"
+cc = "1.0"
 cfg-if = "1.0.0"
+lazy_static = "1"
+regex = "1"
 spack = { git = "https://github.com/cosmicexplorer/spack-rs", rev = "180073445756490bbbd630da9d4d85438ffac185" }
 # spack = { path = "/home/cosmicexplorer/tools/spack-rs" }
 tokio = { version = "1.17.0", features = ["full"] }
+walkdir = "2"
 
 [features]
 default = [

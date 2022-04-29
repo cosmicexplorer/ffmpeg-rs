@@ -36,7 +36,6 @@
 #![allow(clippy::new_without_default, clippy::new_ret_no_self)]
 /* Arc<Mutex> can be more clear than needing to grok Orderings: */
 #![allow(clippy::mutex_atomic)]
-
 #![allow(deref_nullptr)]
 #![allow(non_upper_case_globals)]
 #![allow(non_camel_case_types)]
@@ -46,8 +45,16 @@ pub mod bindings;
 
 #[cfg(test)]
 mod tests {
+  use super::bindings;
+
   #[test]
-  fn it_works() {
-    assert_eq!(crate::bindings::LIBAVUTIL_VERSION_MAJOR, 56);
+  fn constants() {
+    assert_eq!(bindings::LIBAVUTIL_VERSION_MAJOR, 56);
+  }
+
+  #[test]
+  fn linked_functions() {
+    let version = unsafe { bindings::avutil_version() };
+    assert!(version > bindings::LIBAVUTIL_VERSION_MAJOR);
   }
 }

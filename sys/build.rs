@@ -53,7 +53,7 @@ cfg_if::cfg_if! {
 
 #[allow(dead_code)]
 async fn ensure_ffmpeg_prefix_linux(spack: Invocation) -> Result<PathBuf, spack::Error> {
-  let ffmpeg_for_linux = CLISpec::new(format!("ffmpeg@4.4.1"));
+  let ffmpeg_for_linux = CLISpec::new(format!("ffmpeg@4.4.1~alsa%gcc"));
   let install = Install {
     spack: spack.clone(),
     spec: ffmpeg_for_linux,
@@ -179,11 +179,70 @@ async fn ensure_ffmpeg_prefix_wasm(spack: Invocation) -> Result<PathBuf, spack::
   Ok(ffmpeg_prefix)
 }
 
+cfg_if::cfg_if! {
+  if #[cfg(feature = "wasm")] {
+    fn link_libraries(ffmpeg_prefix: PathBuf) -> Result<(), spack::Error> {
+      link_libraries_wasm(ffmpeg_prefix)
+    }
+  } else if #[cfg(feature = "linux")] {
+    fn link_libraries(ffmpeg_prefix: PathBuf) -> Result<(), spack::Error> {
+      link_libraries_linux(ffmpeg_prefix)
+    }
+  } else {
+    unreachable!("must enable either wasm or linux features");
+  }
+}
+
+fn walk_libs(lib_root: PathBuf) -> Result<Vec<(PathBuf, String)>, spack::Error> {
+  let mut ret = Vec::new();
+  for file in walkdir::WalkDir::new(lib_root) {
+    let file = file.unwrap();
+    lazy_static::lazy_static! {
+      static ref RE: regex::Regex = regex::Regex::new(r"lib([^/]+)\.so").unwrap();
+    }
+    if let Some(m) = RE.captures(&format!("{}", file.path().display())) {
+      let lib_name = m.get(1).unwrap().as_str();
+      println!("cargo:rerun-if-changed={}", file.path().display());
+      ret.push((file.path().to_path_buf(), lib_name.to_string()));
+    }
+  }
+  Ok(ret)
+}
+
+#[allow(dead_code)]
+fn link_libraries_wasm(ffmpeg_prefix: PathBuf) -> Result<(), spack::Error> {
+  /* let lib_path = ffmpeg_prefix.join("lib"); */
+
+  /* let mut cc = cc::Build::new(); */
+  /* cc.shared_flag(true).static_flag(false); */
+
+  /* for (lib_path, _) in walk_libs(lib_path)?.into_iter() { */
+  /*   cc.object(lib_path); */
+  /* } */
+
+  /* cc.compile("ffmpeg"); */
+  link_libraries_linux(ffmpeg_prefix)?;
+
+  Ok(())
+}
+
+#[allow(dead_code)]
+fn link_libraries_linux(ffmpeg_prefix: PathBuf) -> Result<(), spack::Error> {
+  let lib_path = ffmpeg_prefix.join("lib");
+  println!("cargo:rustc-link-search=native={}", lib_path.display());
+  for (_, lib_name) in walk_libs(lib_path)?.into_iter() {
+    println!("cargo:rustc-link-lib={}", lib_name);
+  }
+  Ok(())
+}
+
 #[tokio::main]
 async fn main() -> Result<(), spack::Error> {
   let spack = Invocation::summon().await?;
 
   let ffmpeg_prefix = ensure_ffmpeg_prefix(spack).await?;
+
+  link_libraries(ffmpeg_prefix.clone())?;
 
   let ffmpeg_header_root = ffmpeg_prefix.join("include");
   let bindings = {
@@ -193,6 +252,7 @@ async fn main() -> Result<(), spack::Error> {
       .parse_callbacks(Box::new(bindgen::CargoCallbacks))
       .allowlist_type("AV.*")
       .allowlist_type("Swr.*")
+      .allowlist_type("LIBAV.*")
       .allowlist_var("Swr.*")
       .allowlist_var("LIBAV.*")
       .allowlist_var("FF_.*")
