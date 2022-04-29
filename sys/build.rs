@@ -35,7 +35,7 @@ use spack::{
   invocation::spack::Invocation,
 };
 
-use std::path::PathBuf;
+use std::{io, path::PathBuf};
 
 cfg_if::cfg_if! {
   if #[cfg(feature = "wasm")] {
@@ -211,17 +211,16 @@ fn walk_libs(lib_root: PathBuf) -> Result<Vec<(PathBuf, String)>, spack::Error> 
 
 #[allow(dead_code)]
 fn link_libraries_wasm(ffmpeg_prefix: PathBuf) -> Result<(), spack::Error> {
-  /* let lib_path = ffmpeg_prefix.join("lib"); */
+  let lib_path = ffmpeg_prefix.join("lib");
 
-  /* let mut cc = cc::Build::new(); */
-  /* cc.shared_flag(true).static_flag(false); */
+  let mut cc = cc::Build::new();
+  cc.shared_flag(true).static_flag(false);
 
-  /* for (lib_path, _) in walk_libs(lib_path)?.into_iter() { */
-  /*   cc.object(lib_path); */
-  /* } */
+  for (lib_path, _) in walk_libs(lib_path)?.into_iter() {
+    cc.object(lib_path);
+  }
 
-  /* cc.compile("ffmpeg"); */
-  link_libraries_linux(ffmpeg_prefix)?;
+  cc.compile("ffmpeg");
 
   Ok(())
 }
@@ -231,8 +230,57 @@ fn link_libraries_linux(ffmpeg_prefix: PathBuf) -> Result<(), spack::Error> {
   let lib_path = ffmpeg_prefix.join("lib");
   println!("cargo:rustc-link-search=native={}", lib_path.display());
   for (_, lib_name) in walk_libs(lib_path)?.into_iter() {
+    /* FIXME: don't always include all of these libraries, but only if it matches the selected
+     * features as in generate_bindings()! Also, check to ensure that *all libraries corresponding
+     * to the selected features have been linked* so users don't get weird link errors! */
     println!("cargo:rustc-link-lib={}", lib_name);
   }
+  Ok(())
+}
+
+fn generate_bindings(
+  ffmpeg_prefix: PathBuf,
+  header_path: PathBuf,
+  output_path: PathBuf,
+) -> Result<(), io::Error> {
+  let ffmpeg_header_root = ffmpeg_prefix.join("include");
+  let bindings = bindgen::Builder::default()
+    .clang_arg(format!("-I{}", ffmpeg_header_root.display()))
+    .header(format!("{}", header_path.display()))
+    .parse_callbacks(Box::new(bindgen::CargoCallbacks))
+    .allowlist_type("AV.*")
+    .allowlist_type("Swr.*")
+    .allowlist_type("LIBAV.*")
+    .allowlist_var("Swr.*")
+    .allowlist_var("LIBAV.*")
+    .allowlist_var("FF_.*")
+    .allowlist_var("AV_.*")
+    .allowlist_function("av.*")
+    .allowlist_function("swr.*");
+
+  /* We always build *all* of these libraries for the ffmpeg%emscripten spec within *spack*; we use
+   * features to modify *which of these libraries gets included in your rust code*.
+   * src/ffmpeg.h has ifdef blocks for each of these preprocessor defines. */
+  #[cfg(feature = "libavcodec")]
+  let bindings = bindings.clang_arg("-DLIBAVCODEC");
+  #[cfg(feature = "libavdevice")]
+  let bindings = bindings.clang_arg("-DLIBAVDEVICE");
+  #[cfg(feature = "libavfilter")]
+  let bindings = bindings.clang_arg("-DLIBAVFILTER");
+  #[cfg(feature = "libavformat")]
+  let bindings = bindings.clang_arg("-DLIBAVFORMAT");
+  #[cfg(feature = "libavutil")]
+  let bindings = bindings.clang_arg("-DLIBAVUTIL");
+  #[cfg(feature = "libpostproc")]
+  let bindings = bindings.clang_arg("-DLIBPOSTPROC");
+  #[cfg(feature = "libswresample")]
+  let bindings = bindings.clang_arg("-DLIBSWRESAMPLE");
+  #[cfg(feature = "libswscale")]
+  let bindings = bindings.clang_arg("-DLIBSWSCALE");
+
+  let bindings = bindings.generate().expect("this is a Result<_, ()>");
+  bindings.write_to_file(&output_path)?;
+
   Ok(())
 }
 
@@ -244,47 +292,11 @@ async fn main() -> Result<(), spack::Error> {
 
   link_libraries(ffmpeg_prefix.clone())?;
 
-  let ffmpeg_header_root = ffmpeg_prefix.join("include");
-  let bindings = {
-    let bindings = bindgen::Builder::default()
-      .clang_arg(format!("-I{}", ffmpeg_header_root.display()))
-      .header("src/ffmpeg.h")
-      .parse_callbacks(Box::new(bindgen::CargoCallbacks))
-      .allowlist_type("AV.*")
-      .allowlist_type("Swr.*")
-      .allowlist_type("LIBAV.*")
-      .allowlist_var("Swr.*")
-      .allowlist_var("LIBAV.*")
-      .allowlist_var("FF_.*")
-      .allowlist_var("AV_.*")
-      .allowlist_function("av.*")
-      .allowlist_function("swr.*");
-
-    /* We always build *all* of these libraries for the ffmpeg%emscripten spec wihin *spack*; we use
-     * features to modify *which of these libraries gets included in your rust code*. */
-    #[cfg(feature = "libavcodec")]
-    let bindings = bindings.clang_arg("-DLIBAVCODEC");
-    #[cfg(feature = "libavdevice")]
-    let bindings = bindings.clang_arg("-DLIBAVDEVICE");
-    #[cfg(feature = "libavfilter")]
-    let bindings = bindings.clang_arg("-DLIBAVFILTER");
-    #[cfg(feature = "libavformat")]
-    let bindings = bindings.clang_arg("-DLIBAVFORMAT");
-    #[cfg(feature = "libavutil")]
-    let bindings = bindings.clang_arg("-DLIBAVUTIL");
-    #[cfg(feature = "libpostproc")]
-    let bindings = bindings.clang_arg("-DLIBPOSTPROC");
-    #[cfg(feature = "libswresample")]
-    let bindings = bindings.clang_arg("-DLIBSWRESAMPLE");
-    #[cfg(feature = "libswscale")]
-    let bindings = bindings.clang_arg("-DLIBSWSCALE");
-
-    bindings.generate().expect("unable to generate bindings")
-  };
-
-  bindings
-    .write_to_file("src/bindings.rs")
-    .expect("couldn't write bindings");
+  let header_path = PathBuf::from("src/ffmpeg.h");
+  let bindings_path = PathBuf::from("src/bindings.rs");
+  /* FIXME: fails with --feature wasm --target wasm32-unknown-unknown saying libclang.so.13 is the
+   * wrong format? */
+  generate_bindings(ffmpeg_prefix, header_path, bindings_path)?;
 
   Ok(())
 }
