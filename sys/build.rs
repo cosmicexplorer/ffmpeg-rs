@@ -31,19 +31,21 @@
 
 use bindgen;
 use spack::{
+  self,
   commands::{compiler_find::*, find::*, install::*, load::*, *},
-  invocation::spack::Invocation,
+  subprocess::spack::InvocationSummoningError,
+  utils, SpackInvocation,
 };
 
 use std::{io, path::PathBuf};
 
 cfg_if::cfg_if! {
   if #[cfg(feature = "wasm")] {
-    async fn ensure_ffmpeg_prefix(spack: Invocation) -> Result<PathBuf, spack::Error> {
+    async fn ensure_ffmpeg_prefix(spack: SpackInvocation) -> Result<PathBuf, spack::Error> {
       ensure_ffmpeg_prefix_wasm(spack).await
     }
   } else if #[cfg(feature = "linux")] {
-    async fn ensure_ffmpeg_prefix(spack: Invocation) -> Result<PathBuf, spack::Error> {
+    async fn ensure_ffmpeg_prefix(spack: SpackInvocation) -> Result<PathBuf, spack::Error> {
       ensure_ffmpeg_prefix_linux(spack).await
     }
   } else {
@@ -52,46 +54,22 @@ cfg_if::cfg_if! {
 }
 
 #[allow(dead_code)]
-async fn ensure_ffmpeg_prefix_linux(spack: Invocation) -> Result<PathBuf, spack::Error> {
-  let ffmpeg_for_linux = CLISpec::new(format!("ffmpeg@4.4.1~alsa%gcc"));
-  let install = Install {
-    spack: spack.clone(),
-    spec: ffmpeg_for_linux,
-  };
-  let ffmpeg_found_spec = install
-    .clone()
-    .install_find()
-    .await
-    .map_err(|e| CommandError::Install(install, e))?;
-  let find_prefix = FindPrefix {
-    spack: spack.clone(),
-    spec: ffmpeg_found_spec.hashed_spec(),
-  };
-  let ffmpeg_prefix = find_prefix
-    .clone()
-    .find_prefix()
-    .await
-    .map_err(|e| CommandError::FindPrefix(find_prefix, e))?
-    .unwrap();
+async fn ensure_ffmpeg_prefix_linux(spack: SpackInvocation) -> Result<PathBuf, spack::Error> {
+  let ffmpeg_prefix = utils::ensure_prefix(spack, "ffmpeg@4.4.1~alsa%gcc".into()).await?;
   Ok(ffmpeg_prefix)
 }
 
 #[allow(dead_code)]
-async fn ensure_ffmpeg_prefix_wasm(spack: Invocation) -> Result<PathBuf, spack::Error> {
-  let llvm_for_wasm = CLISpec::new("llvm@14:+lld+clang+multiple-definitions~compiler-rt~tools-extra-clang~libcxx~gold~openmp~internal_unwind~polly targets=webassembly");
-  let install = Install {
-    spack: spack.clone(),
-    spec: llvm_for_wasm,
-  };
-  let llvm_found_spec = install
-    .clone()
-    .install_find()
-    .await
-    .map_err(|e| CommandError::Install(install, e))?;
+async fn ensure_ffmpeg_prefix_wasm(spack: SpackInvocation) -> Result<PathBuf, spack::Error> {
+  let llvm_found_spec = spack::wasm::ensure_wasm_ready_llvm(spack.clone()).await?;
 
+  /* FIXME: we can't use .install_find() here because `spack find` doesn't work with cli specs that
+   * provide llvm's hash as a dependency of emscripten! So we instead just run find later, and pick
+   * the first match with [0]. */
   let install = Install {
     spack: spack.clone(),
     spec: CLISpec(format!("emscripten@3: ^ {}", llvm_found_spec.hashed_spec())),
+    verbosity: Default::default(),
   };
   install
     .clone()
@@ -125,34 +103,45 @@ async fn ensure_ffmpeg_prefix_wasm(spack: Invocation) -> Result<PathBuf, spack::
     spack: spack.clone(),
     paths: vec![emscripten_prefix],
   };
-  let mut found_compilers = compiler_find
+  let () = compiler_find
     .clone()
     .compiler_find()
     .await
     .map_err(|e| CommandError::CompilerFind(compiler_find, e))?;
-  assert_eq!(1, found_compilers.len());
+
+  let find_compiler_specs = FindCompilerSpecs {
+    spack: spack.clone(),
+    paths: vec![],
+  };
+  let mut found_compilers = find_compiler_specs
+    .clone()
+    .find_compiler_specs()
+    .await
+    .map_err(|e| CommandError::FindCompilerSpecs(find_compiler_specs, e))?;
   let emcc_found_compiler = found_compilers.pop().unwrap();
   assert!(emcc_found_compiler
-    .compiler_spec()
+    .clone()
+    .into_compiler_spec_string()
     .starts_with("emscripten"));
 
   let load = Load {
     spack: spack.clone(),
     specs: vec![emscripten_found_spec.hashed_spec()],
   };
-  let python_env = load.clone().load().await.unwrap();
+  let emscripten_env = load.clone().load().await.unwrap();
 
   let ffmpeg_for_wasm = CLISpec::new(format!(
     "ffmpeg@4.4.1~alsa~static~stripping%{}",
-    emcc_found_compiler.compiler_spec()
+    emcc_found_compiler.into_compiler_spec_string()
   ));
   let install = Install {
     spack: spack.clone(),
     spec: ffmpeg_for_wasm.clone(),
+    verbosity: Default::default(),
   };
   let () = install
     .clone()
-    .install_with_env(python_env)
+    .install_with_env(emscripten_env)
     .await
     .map_err(|e| CommandError::Install(install, e))?;
   let find = Find {
@@ -286,7 +275,7 @@ fn generate_bindings(
 
 #[tokio::main]
 async fn main() -> Result<(), spack::Error> {
-  let spack = Invocation::summon().await?;
+  let spack = SpackInvocation::summon().await?;
 
   let ffmpeg_prefix = ensure_ffmpeg_prefix(spack).await?;
 
@@ -296,7 +285,14 @@ async fn main() -> Result<(), spack::Error> {
   let bindings_path = PathBuf::from("src/bindings.rs");
   /* FIXME: fails with --feature wasm --target wasm32-unknown-unknown saying libclang.so.13 is the
    * wrong format? */
-  generate_bindings(ffmpeg_prefix, header_path, bindings_path)?;
+  match generate_bindings(ffmpeg_prefix, header_path, bindings_path) {
+    Ok(()) => (),
+    Err(e) => {
+      let e: InvocationSummoningError = e.into();
+      let e: spack::Error = e.into();
+      return Err(e);
+    }
+  }
 
   Ok(())
 }

@@ -14,5 +14,36 @@ authors = ["Danny McClanahan <dmcC2@hypnicjerk.ai>"]
 # so it's only enabled in release mode.
 lto                     = true
 
+[workspace]
+resolver = "2"
+members = [".", "./sys"]
+default-members = ["."]
+
 [dependencies]
 ffmpeg-sys = { path = "./sys" }
+
+[features]
+default = [
+    "libavcodec",
+    "libavdevice",
+    "libavfilter",
+    "libavformat",
+    "libavutil",
+    "libpostproc",
+    "libswresample",
+    "libswscale",
+  ]
+
+# Platform support.
+linux = ["ffmpeg-sys/linux"]
+wasm = ["ffmpeg-sys/wasm"]
+
+# Modules to enable.
+libavcodec = ["ffmpeg-sys/libavcodec"]
+libavdevice = ["ffmpeg-sys/libavdevice"]
+libavfilter = ["ffmpeg-sys/libavfilter"]
+libavformat = ["ffmpeg-sys/libavformat"]
+libavutil = ["ffmpeg-sys/libavutil"]
+libpostproc = ["ffmpeg-sys/libpostproc"]
+libswresample = ["ffmpeg-sys/libswresample"]
+libswscale = ["ffmpeg-sys/libswscale"]
