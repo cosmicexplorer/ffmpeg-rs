@@ -17,7 +17,7 @@ cc = "1.0"
 cfg-if = "1.0.0"
 lazy_static = "1"
 regex = "1"
-spack = { git = "https://github.com/cosmicexplorer/spack-rs", rev = "45a67baef5bd03aad635c049c8d3645193bdcd5d" }
+spack = { git = "https://github.com/cosmicexplorer/spack-rs", rev = "7ee93040fb8fc0c47f9b141d1c232233ba2600fe" }
 # spack = { path = "/home/cosmicexplorer/tools/spack-rs" }
 tokio = { version = "1.17.0", features = ["full"] }
 walkdir = "2"

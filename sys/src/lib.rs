@@ -41,6 +41,10 @@
 #![allow(non_camel_case_types)]
 #![allow(non_snake_case)]
 
+/* The #[doc = "..."] comments generated from the javadoc comments in the ffmpeg headers have code
+ * samples that get parsed as doctests, so we avoid including this module when searching for
+ * doctests. */
+#[cfg(not(doctest))]
 pub mod bindings;
 
 #[cfg(test)]

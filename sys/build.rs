@@ -33,19 +33,19 @@ use bindgen;
 use spack::{
   self,
   commands::{compiler_find::*, find::*, install::*, load::*, *},
-  subprocess::spack::InvocationSummoningError,
-  utils, SpackInvocation,
+  utils::{self, prefix},
+  SpackInvocation,
 };
 
 use std::{io, path::PathBuf};
 
 cfg_if::cfg_if! {
   if #[cfg(feature = "wasm")] {
-    async fn ensure_ffmpeg_prefix(spack: SpackInvocation) -> Result<PathBuf, spack::Error> {
+    async fn ensure_ffmpeg_prefix(spack: SpackInvocation) -> Result<prefix::Prefix, spack::Error> {
       ensure_ffmpeg_prefix_wasm(spack).await
     }
   } else if #[cfg(feature = "linux")] {
-    async fn ensure_ffmpeg_prefix(spack: SpackInvocation) -> Result<PathBuf, spack::Error> {
+    async fn ensure_ffmpeg_prefix(spack: SpackInvocation) -> Result<prefix::Prefix, spack::Error> {
       ensure_ffmpeg_prefix_linux(spack).await
     }
   } else {
@@ -54,14 +54,16 @@ cfg_if::cfg_if! {
 }
 
 #[allow(dead_code)]
-async fn ensure_ffmpeg_prefix_linux(spack: SpackInvocation) -> Result<PathBuf, spack::Error> {
+async fn ensure_ffmpeg_prefix_linux(
+  spack: SpackInvocation,
+) -> Result<prefix::Prefix, spack::Error> {
   let ffmpeg_prefix = utils::ensure_prefix(spack, "ffmpeg@4.4.1~alsa%gcc".into()).await?;
   Ok(ffmpeg_prefix)
 }
 
 #[allow(dead_code)]
-async fn ensure_ffmpeg_prefix_wasm(spack: SpackInvocation) -> Result<PathBuf, spack::Error> {
-  let llvm_found_spec = spack::wasm::ensure_wasm_ready_llvm(spack.clone()).await?;
+async fn ensure_ffmpeg_prefix_wasm(spack: SpackInvocation) -> Result<prefix::Prefix, spack::Error> {
+  let llvm_found_spec = utils::wasm::ensure_wasm_ready_llvm(spack.clone()).await?;
 
   /* FIXME: we can't use .install_find() here because `spack find` doesn't work with cli specs that
    * provide llvm's hash as a dependency of emscripten! So we instead just run find later, and pick
@@ -99,25 +101,16 @@ async fn ensure_ffmpeg_prefix_wasm(spack: SpackInvocation) -> Result<PathBuf, sp
     .map_err(|e| CommandError::FindPrefix(find_prefix, e))?
     .unwrap();
 
-  let compiler_find = CompilerFind {
-    spack: spack.clone(),
-    paths: vec![emscripten_prefix],
-  };
-  let () = compiler_find
-    .clone()
-    .compiler_find()
-    .await
-    .map_err(|e| CommandError::CompilerFind(compiler_find, e))?;
-
   let find_compiler_specs = FindCompilerSpecs {
     spack: spack.clone(),
-    paths: vec![],
+    paths: vec![emscripten_prefix.path],
   };
   let mut found_compilers = find_compiler_specs
     .clone()
     .find_compiler_specs()
     .await
     .map_err(|e| CommandError::FindCompilerSpecs(find_compiler_specs, e))?;
+  assert_eq!(1, found_compilers.len());
   let emcc_found_compiler = found_compilers.pop().unwrap();
   assert!(emcc_found_compiler
     .clone()
@@ -170,60 +163,38 @@ async fn ensure_ffmpeg_prefix_wasm(spack: SpackInvocation) -> Result<PathBuf, sp
 
 cfg_if::cfg_if! {
   if #[cfg(feature = "wasm")] {
-    fn link_libraries(ffmpeg_prefix: PathBuf) -> Result<(), spack::Error> {
-      link_libraries_wasm(ffmpeg_prefix)
-    }
+    const LINK_MODE: prefix::LinkMode = prefix::LinkMode::Wasm;
   } else if #[cfg(feature = "linux")] {
-    fn link_libraries(ffmpeg_prefix: PathBuf) -> Result<(), spack::Error> {
-      link_libraries_linux(ffmpeg_prefix)
-    }
+    const LINK_MODE: prefix::LinkMode = prefix::LinkMode::Linux;
   } else {
     unreachable!("must enable either wasm or linux features");
   }
 }
 
-fn walk_libs(lib_root: PathBuf) -> Result<Vec<(PathBuf, String)>, spack::Error> {
-  let mut ret = Vec::new();
-  for file in walkdir::WalkDir::new(lib_root) {
-    let file = file.unwrap();
-    lazy_static::lazy_static! {
-      static ref RE: regex::Regex = regex::Regex::new(r"lib([^/]+)\.so").unwrap();
-    }
-    if let Some(m) = RE.captures(&format!("{}", file.path().display())) {
-      let lib_name = m.get(1).unwrap().as_str();
-      println!("cargo:rerun-if-changed={}", file.path().display());
-      ret.push((file.path().to_path_buf(), lib_name.to_string()));
-    }
-  }
-  Ok(ret)
-}
+async fn link_libraries(ffmpeg_prefix: prefix::Prefix) -> Result<(), prefix::PrefixTraversalError> {
+  let mut needed_libraries: Vec<prefix::LibraryName> = Vec::new();
+  #[cfg(feature = "libavcodec")]
+  needed_libraries.push(prefix::LibraryName("avcodec".to_string()));
+  #[cfg(feature = "libavdevice")]
+  needed_libraries.push(prefix::LibraryName("avdevice".to_string()));
+  #[cfg(feature = "libavfilter")]
+  needed_libraries.push(prefix::LibraryName("avfilter".to_string()));
+  #[cfg(feature = "libavformat")]
+  needed_libraries.push(prefix::LibraryName("avformat".to_string()));
+  #[cfg(feature = "libavutil")]
+  needed_libraries.push(prefix::LibraryName("avutil".to_string()));
+  #[cfg(feature = "libpostproc")]
+  needed_libraries.push(prefix::LibraryName("postproc".to_string()));
+  #[cfg(feature = "libswresample")]
+  needed_libraries.push(prefix::LibraryName("swresample".to_string()));
+  #[cfg(feature = "libswscale")]
+  needed_libraries.push(prefix::LibraryName("swscale".to_string()));
 
-#[allow(dead_code)]
-fn link_libraries_wasm(ffmpeg_prefix: PathBuf) -> Result<(), spack::Error> {
-  let lib_path = ffmpeg_prefix.join("lib");
+  let query = prefix::SharedLibsQuery { needed_libraries };
+  let libs = query.find_shared_libraries(&ffmpeg_prefix).await?;
 
-  let mut cc = cc::Build::new();
-  cc.shared_flag(true).static_flag(false);
+  libs.link_libraries(LINK_MODE);
 
-  for (lib_path, _) in walk_libs(lib_path)?.into_iter() {
-    cc.object(lib_path);
-  }
-
-  cc.compile("ffmpeg");
-
-  Ok(())
-}
-
-#[allow(dead_code)]
-fn link_libraries_linux(ffmpeg_prefix: PathBuf) -> Result<(), spack::Error> {
-  let lib_path = ffmpeg_prefix.join("lib");
-  println!("cargo:rustc-link-search=native={}", lib_path.display());
-  for (_, lib_name) in walk_libs(lib_path)?.into_iter() {
-    /* FIXME: don't always include all of these libraries, but only if it matches the selected
-     * features as in generate_bindings()! Also, check to ensure that *all libraries corresponding
-     * to the selected features have been linked* so users don't get weird link errors! */
-    println!("cargo:rustc-link-lib={}", lib_name);
-  }
   Ok(())
 }
 
@@ -274,25 +245,23 @@ fn generate_bindings(
 }
 
 #[tokio::main]
-async fn main() -> Result<(), spack::Error> {
-  let spack = SpackInvocation::summon().await?;
+async fn main() {
+  let spack = SpackInvocation::summon()
+    .await
+    .expect("spack summoning failed");
 
-  let ffmpeg_prefix = ensure_ffmpeg_prefix(spack).await?;
+  let ffmpeg_prefix = ensure_ffmpeg_prefix(spack)
+    .await
+    .expect("finding ffmpeg failed");
 
-  link_libraries(ffmpeg_prefix.clone())?;
+  link_libraries(ffmpeg_prefix.clone())
+    .await
+    .expect("linking libraries should work");
 
   let header_path = PathBuf::from("src/ffmpeg.h");
   let bindings_path = PathBuf::from("src/bindings.rs");
   /* FIXME: fails with --feature wasm --target wasm32-unknown-unknown saying libclang.so.13 is the
    * wrong format? */
-  match generate_bindings(ffmpeg_prefix, header_path, bindings_path) {
-    Ok(()) => (),
-    Err(e) => {
-      let e: InvocationSummoningError = e.into();
-      let e: spack::Error = e.into();
-      return Err(e);
-    }
-  }
-
-  Ok(())
+  generate_bindings(ffmpeg_prefix.path.clone(), header_path, bindings_path)
+    .expect("generating bindings failed");
 }
