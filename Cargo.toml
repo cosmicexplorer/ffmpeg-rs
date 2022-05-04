@@ -35,7 +35,6 @@ default = [
   ]
 
 # Platform support.
-linux = ["ffmpeg-sys/linux"]
 wasm = ["ffmpeg-sys/wasm"]
 
 # Modules to enable.

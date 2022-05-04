@@ -30,6 +30,7 @@
 #![allow(clippy::mutex_atomic)]
 
 use bindgen;
+use cfg_if::cfg_if;
 use spack::{
   self,
   commands::{compiler_find::*, find::*, install::*, load::*, *},
@@ -39,17 +40,15 @@ use spack::{
 
 use std::{io, path::PathBuf};
 
-cfg_if::cfg_if! {
+cfg_if! {
   if #[cfg(feature = "wasm")] {
     async fn ensure_ffmpeg_prefix(spack: SpackInvocation) -> Result<prefix::Prefix, spack::Error> {
       ensure_ffmpeg_prefix_wasm(spack).await
     }
-  } else if #[cfg(feature = "linux")] {
+  } else {
     async fn ensure_ffmpeg_prefix(spack: SpackInvocation) -> Result<prefix::Prefix, spack::Error> {
       ensure_ffmpeg_prefix_linux(spack).await
     }
-  } else {
-    unreachable!("must enable either wasm or linux features at this time");
   }
 }
 
@@ -101,6 +100,19 @@ async fn ensure_ffmpeg_prefix_wasm(spack: SpackInvocation) -> Result<prefix::Pre
     .map_err(|e| CommandError::FindPrefix(find_prefix, e))?
     .unwrap();
 
+  /* Run `spack compiler find` so it gets registered in ~/.spack/linux/compilers.yaml. */
+  let compiler_find = CompilerFind {
+    spack: spack.clone(),
+    paths: vec![emscripten_prefix.path.clone()],
+  };
+  compiler_find
+    .clone()
+    .compiler_find()
+    .await
+    .map_err(|e| CommandError::CompilerFind(compiler_find, e))?;
+
+  /* Now run our custom script to get the output of the compiler as parsed JSON. This doesn't
+   * modify the global config the way CompilerFind does. */
   let find_compiler_specs = FindCompilerSpecs {
     spack: spack.clone(),
     paths: vec![emscripten_prefix.path],
@@ -124,7 +136,7 @@ async fn ensure_ffmpeg_prefix_wasm(spack: SpackInvocation) -> Result<prefix::Pre
   let emscripten_env = load.clone().load().await.unwrap();
 
   let ffmpeg_for_wasm = CLISpec::new(format!(
-    "ffmpeg@4.4.1~alsa~static~stripping%{}",
+    "ffmpeg@4.4.1%{}",
     emcc_found_compiler.into_compiler_spec_string()
   ));
   let install = Install {
@@ -161,16 +173,6 @@ async fn ensure_ffmpeg_prefix_wasm(spack: SpackInvocation) -> Result<prefix::Pre
   Ok(ffmpeg_prefix)
 }
 
-cfg_if::cfg_if! {
-  if #[cfg(feature = "wasm")] {
-    const LINK_MODE: prefix::LinkMode = prefix::LinkMode::Wasm;
-  } else if #[cfg(feature = "linux")] {
-    const LINK_MODE: prefix::LinkMode = prefix::LinkMode::Linux;
-  } else {
-    unreachable!("must enable either wasm or linux features");
-  }
-}
-
 async fn link_libraries(ffmpeg_prefix: prefix::Prefix) -> Result<(), prefix::PrefixTraversalError> {
   let mut needed_libraries: Vec<prefix::LibraryName> = Vec::new();
   #[cfg(feature = "libavcodec")]
@@ -193,17 +195,70 @@ async fn link_libraries(ffmpeg_prefix: prefix::Prefix) -> Result<(), prefix::Pre
   let query = prefix::SharedLibsQuery { needed_libraries };
   let libs = query.find_shared_libraries(&ffmpeg_prefix).await?;
 
-  libs.link_libraries(LINK_MODE);
+  libs.link_libraries();
 
   Ok(())
 }
 
+#[allow(dead_code)]
 fn generate_bindings(
   ffmpeg_prefix: PathBuf,
   header_path: PathBuf,
   output_path: PathBuf,
 ) -> Result<(), io::Error> {
   let ffmpeg_header_root = ffmpeg_prefix.join("include");
+
+  /* use std::process::Command; */
+
+  /* /\* let bindgen_path = env::var_os("CARGO_BIN_FILE_SPACK_BINDGEN_spack-bindgen").expect("binary"); *\/ */
+  /* let bindgen_path = "bindgen"; */
+
+  /* let mut bindgen = Command::new(bindgen_path); */
+  /* /\* "flags" go first, but we don't use any of those, so then "options", which have a value. *\/ */
+  /* bindgen */
+  /*   .args(["--allowlist-type", "AV.*"]) */
+  /*   .args(["--allowlist-type", "Swr.*"]) */
+  /*   .args(["--allowlist-type", "LIBAV.*"]) */
+  /*   .args(["--allowlist-var", "Swr.*"]) */
+  /*   .args(["--allowlist-var", "LIBAV.*"]) */
+  /*   .args(["--allowlist-var", "FF_.*"]) */
+  /*   .args(["--allowlist-var", "AV_.*"]) */
+  /*   .args(["--allowlist-function", "av.*"]) */
+  /*   .args(["--allowlist-function", "swr.*"]); */
+  /* /\* Write the output file. *\/ */
+  /* bindgen.args(["-o", &format!("{}", output_path.display())]); */
+
+  /* /\* Provide the single input file. *\/ */
+  /* bindgen.arg(format!("{}", header_path.display())); */
+  /* /\* Separate the input file and <clang-args>... *\/ */
+  /* bindgen.arg("--"); */
+
+  /* /\* The following args are passed directly to clang. *\/ */
+  /* bindgen.arg(format!("-I{}", ffmpeg_header_root.display())); */
+  /* bindgen.arg("-I/usr/include"); */
+
+  /* /\* We always build *all* of these libraries for the ffmpeg%emscripten spec within *spack*; we use */
+  /*  * features to modify *which of these libraries gets included in your rust code*. */
+  /*  * src/ffmpeg.h has ifdef blocks for each of these preprocessor defines. *\/ */
+  /* #[cfg(feature = "libavcodec")] */
+  /* bindgen.arg("-DLIBAVCODEC"); */
+  /* #[cfg(feature = "libavdevice")] */
+  /* bindgen.arg("-DLIBAVDEVICE"); */
+  /* #[cfg(feature = "libavfilter")] */
+  /* bindgen.arg("-DLIBAVFILTER"); */
+  /* #[cfg(feature = "libavformat")] */
+  /* bindgen.arg("-DLIBAVFORMAT"); */
+  /* #[cfg(feature = "libavutil")] */
+  /* bindgen.arg("-DLIBAVUTIL"); */
+  /* #[cfg(feature = "libpostproc")] */
+  /* bindgen.arg("-DLIBPOSTPROC"); */
+  /* #[cfg(feature = "libswresample")] */
+  /* bindgen.arg("-DLIBSWRESAMPLE"); */
+  /* #[cfg(feature = "libswscale")] */
+  /* bindgen.arg("-DLIBSWSCALE"); */
+
+  /* assert!(bindgen.status().expect("failed???").success()); */
+
   let bindings = bindgen::Builder::default()
     .clang_arg(format!("-I{}", ffmpeg_header_root.display()))
     .header(format!("{}", header_path.display()))
@@ -258,10 +313,16 @@ async fn main() {
     .await
     .expect("linking libraries should work");
 
-  let header_path = PathBuf::from("src/ffmpeg.h");
-  let bindings_path = PathBuf::from("src/bindings.rs");
   /* FIXME: fails with --feature wasm --target wasm32-unknown-unknown saying libclang.so.13 is the
    * wrong format? */
-  generate_bindings(ffmpeg_prefix.path.clone(), header_path, bindings_path)
-    .expect("generating bindings failed");
+  cfg_if! {
+    if #[cfg(feature = "wasm")] {
+      eprintln!("avoiding generating headers for wasm32 arch right now!");
+    } else {
+      let header_path = PathBuf::from("src/ffmpeg.h");
+      let bindings_path = PathBuf::from("src/bindings.rs");
+      generate_bindings(ffmpeg_prefix.path.clone(), header_path, bindings_path)
+        .expect("generating bindings failed");
+    }
+  }
 }
