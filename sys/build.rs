@@ -192,8 +192,11 @@ async fn link_libraries(ffmpeg_prefix: prefix::Prefix) -> Result<(), prefix::Pre
   #[cfg(feature = "libswscale")]
   needed_libraries.push(prefix::LibraryName("swscale".to_string()));
 
-  let query = prefix::SharedLibsQuery { needed_libraries };
-  let libs = query.find_shared_libraries(&ffmpeg_prefix).await?;
+  let query = prefix::LibsQuery {
+    needed_libraries,
+    kind: prefix::LibraryType::Dynamic,
+  };
+  let libs = query.find_libs(&ffmpeg_prefix).await?;
 
   libs.link_libraries();
 
