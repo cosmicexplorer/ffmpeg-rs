@@ -41,11 +41,24 @@
 #![allow(non_camel_case_types)]
 #![allow(non_snake_case)]
 
+use cfg_if::cfg_if;
+
 /* The #[doc = "..."] comments generated from the javadoc comments in the ffmpeg headers have code
  * samples that get parsed as doctests, so we avoid including this module when searching for
  * doctests. */
-#[cfg(not(doctest))]
-pub mod bindings;
+cfg_if! {
+  if #[cfg(feature = "wasm")] {
+    #[cfg(not(doctest))]
+    pub mod bindings_wasm;
+    #[cfg(not(doctest))]
+    pub use crate::bindings_wasm as bindings;
+  } else {
+    #[cfg(not(doctest))]
+    pub mod bindings_linux;
+    #[cfg(not(doctest))]
+    pub use crate::bindings_linux as bindings;
+  }
+}
 
 #[cfg(test)]
 mod tests {

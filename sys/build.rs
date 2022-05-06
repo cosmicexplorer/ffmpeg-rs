@@ -136,7 +136,7 @@ async fn ensure_ffmpeg_prefix_wasm(spack: SpackInvocation) -> Result<prefix::Pre
   let emscripten_env = load.clone().load().await.unwrap();
 
   let ffmpeg_for_wasm = CLISpec::new(format!(
-    "ffmpeg@4.4.1+web-only%{}",
+    "ffmpeg@4.4.1%{}",
     emcc_found_compiler.into_compiler_spec_string()
   ));
   let install = Install {
@@ -272,10 +272,13 @@ async fn main() {
     .await
     .expect("linking libraries should work");
 
-  /* FIXME: fails with --feature wasm --target wasm32-unknown-unknown saying libclang.so.13 is the
-   * wrong format? */
-  let header_path = PathBuf::from("src/ffmpeg.h");
-  let bindings_path = PathBuf::from("src/bindings.rs");
-  generate_bindings(ffmpeg_prefix.path.clone(), header_path, bindings_path)
-    .expect("generating bindings failed");
+  /* FIXME: fails on alpine with --feature wasm --target wasm32-unknown-unknown saying
+   * libclang.so.13 is the wrong format? */
+  #[cfg(not(feature = "wasm"))]
+  {
+    let header_path = PathBuf::from("src/ffmpeg.h");
+    let bindings_path = PathBuf::from("src/bindings_linux.rs");
+    generate_bindings(ffmpeg_prefix.path.clone(), header_path, bindings_path)
+      .expect("generating bindings failed");
+  }
 }
