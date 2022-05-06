@@ -136,7 +136,7 @@ async fn ensure_ffmpeg_prefix_wasm(spack: SpackInvocation) -> Result<prefix::Pre
   let emscripten_env = load.clone().load().await.unwrap();
 
   let ffmpeg_for_wasm = CLISpec::new(format!(
-    "ffmpeg@4.4.1%{}",
+    "ffmpeg@4.4.1+web-only%{}",
     emcc_found_compiler.into_compiler_spec_string()
   ));
   let install = Install {
