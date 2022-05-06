@@ -211,57 +211,6 @@ fn generate_bindings(
 ) -> Result<(), io::Error> {
   let ffmpeg_header_root = ffmpeg_prefix.join("include");
 
-  /* use std::process::Command; */
-
-  /* /\* let bindgen_path = env::var_os("CARGO_BIN_FILE_SPACK_BINDGEN_spack-bindgen").expect("binary"); *\/ */
-  /* let bindgen_path = "bindgen"; */
-
-  /* let mut bindgen = Command::new(bindgen_path); */
-  /* /\* "flags" go first, but we don't use any of those, so then "options", which have a value. *\/ */
-  /* bindgen */
-  /*   .args(["--allowlist-type", "AV.*"]) */
-  /*   .args(["--allowlist-type", "Swr.*"]) */
-  /*   .args(["--allowlist-type", "LIBAV.*"]) */
-  /*   .args(["--allowlist-var", "Swr.*"]) */
-  /*   .args(["--allowlist-var", "LIBAV.*"]) */
-  /*   .args(["--allowlist-var", "FF_.*"]) */
-  /*   .args(["--allowlist-var", "AV_.*"]) */
-  /*   .args(["--allowlist-function", "av.*"]) */
-  /*   .args(["--allowlist-function", "swr.*"]); */
-  /* /\* Write the output file. *\/ */
-  /* bindgen.args(["-o", &format!("{}", output_path.display())]); */
-
-  /* /\* Provide the single input file. *\/ */
-  /* bindgen.arg(format!("{}", header_path.display())); */
-  /* /\* Separate the input file and <clang-args>... *\/ */
-  /* bindgen.arg("--"); */
-
-  /* /\* The following args are passed directly to clang. *\/ */
-  /* bindgen.arg(format!("-I{}", ffmpeg_header_root.display())); */
-  /* bindgen.arg("-I/usr/include"); */
-
-  /* /\* We always build *all* of these libraries for the ffmpeg%emscripten spec within *spack*; we use */
-  /*  * features to modify *which of these libraries gets included in your rust code*. */
-  /*  * src/ffmpeg.h has ifdef blocks for each of these preprocessor defines. *\/ */
-  /* #[cfg(feature = "libavcodec")] */
-  /* bindgen.arg("-DLIBAVCODEC"); */
-  /* #[cfg(feature = "libavdevice")] */
-  /* bindgen.arg("-DLIBAVDEVICE"); */
-  /* #[cfg(feature = "libavfilter")] */
-  /* bindgen.arg("-DLIBAVFILTER"); */
-  /* #[cfg(feature = "libavformat")] */
-  /* bindgen.arg("-DLIBAVFORMAT"); */
-  /* #[cfg(feature = "libavutil")] */
-  /* bindgen.arg("-DLIBAVUTIL"); */
-  /* #[cfg(feature = "libpostproc")] */
-  /* bindgen.arg("-DLIBPOSTPROC"); */
-  /* #[cfg(feature = "libswresample")] */
-  /* bindgen.arg("-DLIBSWRESAMPLE"); */
-  /* #[cfg(feature = "libswscale")] */
-  /* bindgen.arg("-DLIBSWSCALE"); */
-
-  /* assert!(bindgen.status().expect("failed???").success()); */
-
   let bindings = bindgen::Builder::default()
     .clang_arg(format!("-I{}", ffmpeg_header_root.display()))
     .header(format!("{}", header_path.display()))
@@ -275,6 +224,13 @@ fn generate_bindings(
     .allowlist_var("AV_.*")
     .allowlist_function("av.*")
     .allowlist_function("swr.*");
+
+  /* Necessary for compiling under wasm. FIXME: only works on ubuntu!!! */
+  let bindings = bindings
+    .clang_arg("-I/usr/include")
+    .clang_arg("-I/usr/include/x86_64-linux-gnu")
+    /* See https://github.com/rust-lang/rust-bindgen/issues/1941#issuecomment-748630710. */
+    .clang_arg("-fvisibility=default");
 
   /* We always build *all* of these libraries for the ffmpeg%emscripten spec within *spack*; we use
    * features to modify *which of these libraries gets included in your rust code*.
@@ -318,14 +274,8 @@ async fn main() {
 
   /* FIXME: fails with --feature wasm --target wasm32-unknown-unknown saying libclang.so.13 is the
    * wrong format? */
-  cfg_if! {
-    if #[cfg(feature = "wasm")] {
-      eprintln!("avoiding generating headers for wasm32 arch right now!");
-    } else {
-      let header_path = PathBuf::from("src/ffmpeg.h");
-      let bindings_path = PathBuf::from("src/bindings.rs");
-      generate_bindings(ffmpeg_prefix.path.clone(), header_path, bindings_path)
-        .expect("generating bindings failed");
-    }
-  }
+  let header_path = PathBuf::from("src/ffmpeg.h");
+  let bindings_path = PathBuf::from("src/bindings.rs");
+  generate_bindings(ffmpeg_prefix.path.clone(), header_path, bindings_path)
+    .expect("generating bindings failed");
 }
